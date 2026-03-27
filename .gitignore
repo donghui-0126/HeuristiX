@@ -1,10 +1,11 @@
 # OMC state
 .omc/
 
-# PDF papers (large files)
-paper_pdf/
+# PDF papers (large binary files)
+paper-pdf/
+idea/아이디어 초안 정리.pdf
 
-# Generated files
+# Generated presentation files
 idea/generate_pptx.py
 idea/generate_pdf.py
 idea/*.pptx
