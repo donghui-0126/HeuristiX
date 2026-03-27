@@ -1,0 +1,15 @@
+# OMC state
+.omc/
+
+# PDF papers (large files)
+paper_pdf/
+
+# Generated files
+idea/generate_pptx.py
+idea/generate_pdf.py
+idea/*.pptx
+idea/*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
