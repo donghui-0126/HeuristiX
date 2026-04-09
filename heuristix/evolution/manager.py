@@ -237,6 +237,10 @@ class EvolutionManager:
                     self.console.print(f"  Kinds: {', '.join(parts)}")
             except Exception:
                 pass
+            # Show embedding store stats
+            if self.distiller and self.distiller.embedding_store:
+                n_emb = self.distiller.embedding_store.size
+                self.console.print(f"  Embeddings: {n_emb} entries (semantic RAG)")
         else:
             self.console.print("\n[dim]Knowledge: disabled (--no-amure)[/]")
 

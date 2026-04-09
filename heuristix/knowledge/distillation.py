@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from heuristix.knowledge.embeddings import EmbeddingStore
 from heuristix.llm.prompts import DISTILLATION_PROMPT
 
 if TYPE_CHECKING:
@@ -21,10 +22,12 @@ class KnowledgeDistiller:
         amure_client: AmureClient,
         llm: LLMProvider,
         config: HeuristiXConfig | None = None,
+        embedding_store: EmbeddingStore | None = None,
     ):
         self.amure = amure_client
         self.llm = llm
         self.config = config
+        self.embedding_store = embedding_store
 
         # Use role-specific provider if config is available
         if config is not None:
@@ -107,6 +110,24 @@ class KnowledgeDistiller:
             )
             node_id = node.get("id", "")
 
+            # Store embedding for semantic search
+            if self.embedding_store and node_id:
+                one_liner = claim_text.split(".")[0] + "."
+                try:
+                    self.embedding_store.add(
+                        node_id=node_id,
+                        text=claim_text,
+                        one_liner=one_liner,
+                        metadata={
+                            "generation": generation,
+                            "source": "distillation",
+                            "status": "Draft",
+                            "is_failure": False,
+                        },
+                    )
+                except Exception:
+                    pass  # embedding API might fail
+
             # Link reasons as supporting evidence
             for reason_text in reasons:
                 reason_node = self.amure.add_node(
@@ -135,8 +156,25 @@ class KnowledgeDistiller:
                 metadata={"generation": generation, "source": "distillation", "failed": True},
                 status="Draft",
             )
-            # Link failure as a rebuttal to claims if any
+            # Store failure embedding for semantic search
             failure_id = failure_node.get("id", "")
+            if self.embedding_store and failure_id:
+                try:
+                    self.embedding_store.add(
+                        node_id=failure_id,
+                        text=failure_text,
+                        one_liner=failure_text.split(".")[0] + ".",
+                        metadata={
+                            "generation": generation,
+                            "source": "distillation",
+                            "status": "Draft",
+                            "is_failure": True,
+                        },
+                    )
+                except Exception:
+                    pass  # embedding API might fail
+
+            # Link failure as a rebuttal to claims if any
             if failure_id:
                 for claim_text in claims:
                     # Re-query or re-use node_id isn't ideal; use edge to first claim if available

@@ -74,11 +74,16 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.no_amure:
         from heuristix.amure_client import AmureClient
+        from heuristix.knowledge.embeddings import EmbeddingStore
 
         amure_client = AmureClient(
             base_url=config.amure_do.url,
             timeout=config.amure_do.timeout,
         )
+
+        # Initialize embedding store (works independently of amure-do)
+        embedding_store = EmbeddingStore()
+        console.print(f"[cyan]Embedding store: {embedding_store.size} entries[/]")
 
         if amure_client.is_connected():
             console.print(f"[green]Connected to amure-do at {config.amure_do.url}[/]")
@@ -86,8 +91,10 @@ def main(argv: list[str] | None = None) -> None:
             from heuristix.knowledge.distillation import KnowledgeDistiller
             from heuristix.knowledge.selection import KnowledgeSelector
 
-            knowledge_selector = KnowledgeSelector(amure_client)
-            knowledge_distiller = KnowledgeDistiller(amure_client, llm)
+            knowledge_selector = KnowledgeSelector(amure_client, embedding_store=embedding_store)
+            knowledge_distiller = KnowledgeDistiller(
+                amure_client, llm, config=config, embedding_store=embedding_store
+            )
         else:
             console.print(
                 f"[yellow]amure-do not reachable at {config.amure_do.url} "

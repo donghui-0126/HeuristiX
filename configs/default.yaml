@@ -55,6 +55,12 @@ knowledge:
   bottom_k_compare: 3
   maturity_threshold: 3
 
+  # RAG settings
+  rag:
+    max_knowledge_items: 2      # max items to inject (mature)
+    max_failure_items: 2        # max failure warnings
+    embedding_model: "text-embedding-3-small"
+
   # amure-db edge mapping for HeuristiX
   edge_mapping:
     evolution_lineage: "DerivedFrom"    # parent heuristic -> child heuristic
