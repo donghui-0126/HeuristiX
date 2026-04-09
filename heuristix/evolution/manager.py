@@ -10,6 +10,7 @@ from rich.table import Table
 
 from heuristix.evolution.operators import crossover, init_population, mutate
 from heuristix.evolution.population import Individual, Population
+from heuristix.llm.provider import create_provider_for_role
 
 if TYPE_CHECKING:
     from heuristix.amure_client import AmureClient
@@ -38,6 +39,16 @@ class EvolutionManager:
         self.problem = problem
         self.llm = llm
         self.evaluator = evaluator
+
+        # Create role-specific providers (fall back to llm if role config unavailable)
+        try:
+            self.llm_mutation = create_provider_for_role(config, "mutation")
+            self.llm_crossover = create_provider_for_role(config, "crossover")
+            self.llm_init = create_provider_for_role(config, "init")
+        except (ValueError, Exception):
+            self.llm_mutation = llm
+            self.llm_crossover = llm
+            self.llm_init = llm
         self.amure = amure_client
         self.selector = knowledge_selector
         self.distiller = knowledge_distiller
@@ -83,11 +94,11 @@ class EvolutionManager:
                     # Crossover
                     parent_a = self.population.tournament_select(evo.tournament_size)
                     parent_b = self.population.tournament_select(evo.tournament_size)
-                    child = crossover(parent_a, parent_b, self.llm, knowledge_ctx)
+                    child = crossover(parent_a, parent_b, self.llm_crossover, knowledge_ctx)
                 else:
                     # Mutation
                     parent = self.population.tournament_select(evo.tournament_size)
-                    child = mutate(parent, self.llm, knowledge_ctx, failure_warnings)
+                    child = mutate(parent, self.llm_mutation, knowledge_ctx, failure_warnings)
 
                 offspring.append(child)
 
@@ -149,7 +160,7 @@ class EvolutionManager:
         description = self.problem.describe()
         individuals = init_population(
             self.config.evolution.population_size,
-            self.llm,
+            self.llm_init,
             description,
         )
         for ind in individuals:

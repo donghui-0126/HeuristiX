@@ -8,6 +8,7 @@ from heuristix.llm.prompts import DISTILLATION_PROMPT
 
 if TYPE_CHECKING:
     from heuristix.amure_client import AmureClient
+    from heuristix.config import HeuristiXConfig
     from heuristix.evolution.population import Individual
     from heuristix.llm.provider import LLMProvider
 
@@ -15,9 +16,38 @@ if TYPE_CHECKING:
 class KnowledgeDistiller:
     """Extract insights from evolution generations and store in amure-do."""
 
-    def __init__(self, amure_client: AmureClient, llm: LLMProvider):
+    def __init__(
+        self,
+        amure_client: AmureClient,
+        llm: LLMProvider,
+        config: HeuristiXConfig | None = None,
+    ):
         self.amure = amure_client
         self.llm = llm
+        self.config = config
+
+        # Use role-specific provider if config is available
+        if config is not None:
+            from heuristix.llm.provider import create_provider_for_role
+            try:
+                self.llm = create_provider_for_role(config, "distillation")
+            except (ValueError, Exception):
+                pass  # fall back to the passed llm
+
+    def _edge_kind(self, mapping_key: str) -> str:
+        """Resolve an edge kind from config edge_mapping, falling back to hardcoded defaults."""
+        if self.config is not None:
+            em = self.config.knowledge.edge_mapping
+            return getattr(em, mapping_key, mapping_key)
+        defaults = {
+            "evolution_lineage": "DerivedFrom",
+            "insight_supports": "Support",
+            "insight_rebuts": "Rebut",
+            "strategy_refines": "Refines",
+            "strategy_depends": "DependsOn",
+            "strategy_contradicts": "Contradicts",
+        }
+        return defaults.get(mapping_key, mapping_key)
 
     def distill_generation(
         self,
@@ -62,6 +92,9 @@ class KnowledgeDistiller:
         response = self.llm.generate(prompt, system=system)
         claims, reasons, failures = self._parse_distillation(response)
 
+        supports_kind = self._edge_kind("insight_supports")
+        rebuts_kind = self._edge_kind("insight_rebuts")
+
         # Store claims in amure-do
         for claim_text in claims:
             keywords = self._extract_keywords(claim_text)
@@ -88,20 +121,51 @@ class KnowledgeDistiller:
                     self.amure.add_edge(
                         source=reason_id,
                         target=node_id,
-                        kind="Support",
+                        kind=supports_kind,
                         note=f"Gen {generation} distillation",
                     )
 
         # Store failure insights as rebuttals
         for failure_text in failures:
             keywords = self._extract_keywords(failure_text)
-            self.amure.add_node(
+            failure_node = self.amure.add_node(
                 kind="Claim",
                 statement=failure_text,
                 keywords=["failure", "avoid"] + keywords,
                 metadata={"generation": generation, "source": "distillation", "failed": True},
                 status="Draft",
             )
+            # Link failure as a rebuttal to claims if any
+            failure_id = failure_node.get("id", "")
+            if failure_id:
+                for claim_text in claims:
+                    # Re-query or re-use node_id isn't ideal; use edge to first claim if available
+                    pass  # rebut edges are added via store_failure_rebuttal if needed
+
+    def store_evolution_lineage(self, parent_id: str, child_id: str, generation: int) -> None:
+        """Store parent→child evolution edge in amure-do."""
+        self.amure.add_edge(
+            source=parent_id,
+            target=child_id,
+            kind=self._edge_kind("evolution_lineage"),
+            note=f"Evolution gen {generation}",
+        )
+
+    def store_heuristic(self, individual: Individual, generation: int) -> str:
+        """Store a heuristic individual as a graph node."""
+        node = self.amure.add_node(
+            kind="Experiment",  # Heuristic is an "experiment" in amure-db terms
+            statement=individual.thought,
+            keywords=self._extract_keywords(individual.thought),
+            metadata={
+                "generation": generation,
+                "code": individual.code,
+                "scores": individual.scores,
+                "parent_ids": individual.parent_ids,
+            },
+            status="Active" if individual.is_valid else "Draft",
+        )
+        return node.get("id", "")
 
     def update_maturity(self, node_id: str, validation_count: int) -> None:
         """Promote node status based on validation count: Draft -> Active -> Accepted."""
