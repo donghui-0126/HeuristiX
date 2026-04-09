@@ -1,0 +1,3 @@
+[submodule "amure-do"]
+	path = amure-do
+	url = https://github.com/donghui-0126/amure-do.git

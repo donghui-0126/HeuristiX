@@ -1,6 +1,19 @@
 # OMC state
 .omc/
 
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+.ruff_cache/
+
+# Data / logs
+data/
+*.log
+.env
+
 # PDF papers (large binary files)
 paper-pdf/
 idea/아이디어 초안 정리.pdf

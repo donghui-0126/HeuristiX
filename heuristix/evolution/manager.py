@@ -1,0 +1,202 @@
+"""Main evolution loop — orchestrates population, operators, evaluation, and knowledge."""
+from __future__ import annotations
+
+import random
+import time
+from typing import TYPE_CHECKING
+
+from rich.console import Console
+from rich.table import Table
+
+from heuristix.evolution.operators import crossover, init_population, mutate
+from heuristix.evolution.population import Individual, Population
+
+if TYPE_CHECKING:
+    from heuristix.amure_client import AmureClient
+    from heuristix.config import HeuristiXConfig
+    from heuristix.evaluation.cascade import EvaluationCascade
+    from heuristix.knowledge.distillation import KnowledgeDistiller
+    from heuristix.knowledge.selection import KnowledgeSelector
+    from heuristix.llm.provider import LLMProvider
+    from heuristix.problems.base import Problem
+
+
+class EvolutionManager:
+    """Drives the knowledge-evolutionary loop."""
+
+    def __init__(
+        self,
+        config: HeuristiXConfig,
+        problem: Problem,
+        llm: LLMProvider,
+        evaluator: EvaluationCascade,
+        amure_client: AmureClient | None = None,
+        knowledge_selector: KnowledgeSelector | None = None,
+        knowledge_distiller: KnowledgeDistiller | None = None,
+    ):
+        self.config = config
+        self.problem = problem
+        self.llm = llm
+        self.evaluator = evaluator
+        self.amure = amure_client
+        self.selector = knowledge_selector
+        self.distiller = knowledge_distiller
+        self.console = Console()
+
+        evo = config.evolution
+        self.population = Population(
+            max_size=evo.population_size,
+            elitism=evo.elitism,
+        )
+        self.stagnation_count = 0
+        self.best_ever: Individual | None = None
+
+    def run(self, generations: int | None = None) -> Individual | None:
+        """Main evolution loop. Returns the best individual found."""
+        gens = generations or self.config.evolution.generations
+        evo = self.config.evolution
+
+        self.console.print("\n[bold cyan]--- Initializing population ---[/]")
+        self._init_population()
+        self._evaluate_population()
+        self._update_best()
+        self._log_generation(0)
+
+        for gen in range(1, gens + 1):
+            self.console.print(f"\n[bold cyan]--- Generation {gen}/{gens} ---[/]")
+            start = time.time()
+
+            offspring: list[Individual] = []
+            target_offspring = evo.population_size - evo.elitism
+
+            for _ in range(target_offspring):
+                # Get knowledge context if amure-do is available
+                knowledge_ctx = ""
+                failure_warnings = ""
+                if self.selector:
+                    parent_for_ctx = self.population.tournament_select(evo.tournament_size)
+                    ctx = self.selector.get_context(parent_for_ctx)
+                    knowledge_ctx = ctx.get("knowledge", "")
+                    failure_warnings = ctx.get("failures", "")
+
+                if random.random() < evo.crossover_rate:
+                    # Crossover
+                    parent_a = self.population.tournament_select(evo.tournament_size)
+                    parent_b = self.population.tournament_select(evo.tournament_size)
+                    child = crossover(parent_a, parent_b, self.llm, knowledge_ctx)
+                else:
+                    # Mutation
+                    parent = self.population.tournament_select(evo.tournament_size)
+                    child = mutate(parent, self.llm, knowledge_ctx, failure_warnings)
+
+                offspring.append(child)
+
+            # Evaluate offspring
+            for ind in offspring:
+                self._evaluate_individual(ind)
+
+            # Update population
+            self.population.next_generation(offspring)
+            prev_best = self.best_ever.primary_score if self.best_ever else float("inf")
+            self._update_best()
+
+            # Stagnation detection
+            curr_best = self.best_ever.primary_score if self.best_ever else float("inf")
+            if curr_best >= prev_best:
+                self.stagnation_count += 1
+            else:
+                self.stagnation_count = 0
+
+            # Suggest combinations if stuck
+            if self.stagnation_count >= 5 and self.amure:
+                self.console.print("[yellow]Stagnation detected — querying amure-do for suggestions...[/]")
+                try:
+                    suggestions = self.amure.suggest_combinations()
+                    self.console.print(f"[yellow]Suggestions: {suggestions}[/]")
+                except Exception:
+                    pass
+                self.stagnation_count = 0
+
+            # Knowledge distillation
+            kn = self.config.knowledge
+            if self.distiller and gen % kn.distill_every == 0:
+                top_k = self.population.get_top(kn.top_k_compare)
+                bottom_k = self.population.get_bottom(kn.bottom_k_compare)
+                try:
+                    self.distiller.distill_generation(top_k, bottom_k, gen)
+                except Exception as e:
+                    self.console.print(f"[red]Distillation error: {e}[/]")
+
+            elapsed = time.time() - start
+            self._log_generation(gen, elapsed)
+
+        # Save graph at the end
+        if self.amure:
+            try:
+                self.amure.save_graph()
+            except Exception:
+                pass
+
+        self.console.print("\n[bold green]Evolution complete![/]")
+        if self.best_ever:
+            self.console.print(f"[bold green]Best: {self.best_ever.summary()}[/]")
+            self.console.print(f"[dim]Thought: {self.best_ever.thought}[/]")
+
+        return self.best_ever
+
+    def _init_population(self) -> None:
+        """Generate the initial population via LLM."""
+        description = self.problem.describe()
+        individuals = init_population(
+            self.config.evolution.population_size,
+            self.llm,
+            description,
+        )
+        for ind in individuals:
+            self.population.add(ind)
+
+    def _evaluate_population(self) -> None:
+        """Evaluate all individuals in the current population."""
+        for ind in self.population.individuals:
+            self._evaluate_individual(ind)
+
+    def _evaluate_individual(self, individual: Individual) -> None:
+        """Evaluate a single individual using the cascade evaluator."""
+        try:
+            scores = self.evaluator.evaluate(
+                individual.code,
+                self.config.evaluation.quick_instances,
+                self.config.evaluation.full_instances,
+            )
+            individual.scores = scores
+        except Exception as e:
+            self.console.print(f"[red]Evaluation failed for {individual.id}: {e}[/]")
+            individual.scores = {"makespan": float("inf")}
+
+    def _update_best(self) -> None:
+        """Track the all-time best individual."""
+        current_best = self.population.best
+        if current_best is None:
+            return
+        if self.best_ever is None or current_best.primary_score < self.best_ever.primary_score:
+            self.best_ever = current_best
+
+    def _log_generation(self, gen: int, elapsed: float = 0.0) -> None:
+        """Log generation statistics with rich table."""
+        stats = self.population.stats()
+
+        table = Table(title=f"Generation {gen}", show_lines=False)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+
+        table.add_row("Best makespan", f"{stats['best']:.1f}")
+        table.add_row("Avg makespan", f"{stats['avg']:.1f}")
+        table.add_row("Worst makespan", f"{stats['worst']:.1f}")
+        table.add_row("Diversity", f"{stats['diversity']:.2f}")
+        table.add_row("Population", str(self.population.size))
+        if elapsed > 0:
+            table.add_row("Time (s)", f"{elapsed:.1f}")
+        if self.best_ever:
+            table.add_row("Best ever", f"{self.best_ever.primary_score:.1f}")
+
+        self.console.print(table)
