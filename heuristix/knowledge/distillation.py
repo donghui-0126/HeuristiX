@@ -113,7 +113,7 @@ class KnowledgeDistiller:
             # Store embedding for semantic search
             if self.embedding_store and node_id:
                 first_sentence = claim_text.split(".")[0] + "."
-                one_liner = first_sentence[:57] + "..." if len(first_sentence) > 60 else first_sentence
+                one_liner = first_sentence
                 try:
                     self.embedding_store.add(
                         node_id=node_id,
@@ -161,7 +161,7 @@ class KnowledgeDistiller:
             failure_id = failure_node.get("id", "")
             if self.embedding_store and failure_id:
                 first_sentence = failure_text.split(".")[0] + "."
-                fail_one_liner = first_sentence[:57] + "..." if len(first_sentence) > 60 else first_sentence
+                fail_one_liner = first_sentence
                 try:
                     self.embedding_store.add(
                         node_id=failure_id,
