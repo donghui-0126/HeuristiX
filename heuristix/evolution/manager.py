@@ -191,6 +191,7 @@ class EvolutionManager:
                     bottom_k = self.population.get_bottom(kn.bottom_k_compare)
                     try:
                         self.distiller.distill_generation(top_k, bottom_k, gen)
+                        self.distiller.promote_validated_claims(top_k, gen)
                     except Exception as e:
                         self.console.print(f"[red]Distillation error: {e}[/]")
 
@@ -217,6 +218,27 @@ class EvolutionManager:
         if self.best_ever:
             self.console.print(f"[bold green]Best: {self.best_ever.summary()}[/]")
             self.console.print(f"[dim]Thought: {self.best_ever.thought}[/]")
+
+        # Knowledge summary
+        if self.amure:
+            try:
+                summary = self.amure.graph_summary()
+                self.console.print("\n[bold]Knowledge Summary:[/]")
+                self.console.print(f"  Nodes: {summary.get('n_nodes', 0)}")
+                self.console.print(f"  Edges: {summary.get('n_edges', 0)}")
+                # Show maturity distribution if available
+                by_status = summary.get("by_status", {})
+                if by_status:
+                    parts = [f"{s}: {c}" for s, c in sorted(by_status.items())]
+                    self.console.print(f"  Maturity: {', '.join(parts)}")
+                by_kind = summary.get("by_kind", {})
+                if by_kind:
+                    parts = [f"{k}: {c}" for k, c in sorted(by_kind.items())]
+                    self.console.print(f"  Kinds: {', '.join(parts)}")
+            except Exception:
+                pass
+        else:
+            self.console.print("\n[dim]Knowledge: disabled (--no-amure)[/]")
 
         # Print benchmark comparison if per-instance data available
         self._print_benchmark_comparison()

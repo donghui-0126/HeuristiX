@@ -3,9 +3,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.console import Console
+
 if TYPE_CHECKING:
     from heuristix.amure_client import AmureClient
     from heuristix.evolution.population import Individual
+
+_console = Console()
 
 
 class KnowledgeSelector:
@@ -27,14 +31,25 @@ class KnowledgeSelector:
 
         # RAG search for relevant knowledge
         knowledge_parts: list[str] = []
+        n_mature = 0
+        n_active = 0
         try:
             results = self.amure.search(query, top_k=5, include_failed=False)
+            # Sort results: Accepted first, then Active, then Draft
+            results.sort(
+                key=lambda r: {"Accepted": 0, "Active": 1, "Draft": 2}.get(
+                    r.get("status", "Draft"), 3
+                )
+            )
             for r in results:
                 status = r.get("status", "Draft")
                 statement = r.get("statement", "")
-                # Prefer Accepted/Active over Draft
                 priority = {"Accepted": 3, "Active": 2, "Draft": 1}.get(status, 0)
                 knowledge_parts.append((priority, f"[{status}] {statement}"))
+                if status == "Accepted":
+                    n_mature += 1
+                elif status == "Active":
+                    n_active += 1
             # Sort by priority descending
             knowledge_parts.sort(key=lambda x: x[0], reverse=True)
         except Exception:
@@ -46,11 +61,13 @@ class KnowledgeSelector:
 
         # Check for failure warnings
         failure_str = ""
+        failure_items: list[dict] = []
         if include_failures:
             try:
                 statement = individual.thought or individual.code[:200]
                 warnings = self.amure.check_failures(statement, keywords)
                 if warnings:
+                    failure_items = warnings
                     failure_str = "\n".join(
                         f"- {w.get('statement', w.get('warning', str(w)))}"
                         for w in warnings
@@ -69,6 +86,17 @@ class KnowledgeSelector:
                 )
         except Exception:
             pass
+
+        # Log what knowledge is being injected
+        if knowledge_parts:
+            _console.print(
+                f"  [dim][Knowledge] Injected {len(knowledge_parts)} items "
+                f"({n_mature} mature, {n_active} active)[/]"
+            )
+            for _, text in knowledge_parts[:2]:
+                _console.print(f"    [dim]-> {text[:70]}...[/]")
+        if failure_items:
+            _console.print(f"  [dim][Failures] {len(failure_items)} warnings[/]")
 
         return {
             "knowledge": knowledge_str,

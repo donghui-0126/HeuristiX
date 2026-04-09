@@ -142,6 +142,63 @@ class KnowledgeDistiller:
                     # Re-query or re-use node_id isn't ideal; use edge to first claim if available
                     pass  # rebut edges are added via store_failure_rebuttal if needed
 
+    def promote_validated_claims(
+        self, top_individuals: list[Individual], generation: int
+    ) -> None:
+        """Check if existing claims are validated by top individuals. Promote if so."""
+        if not self.amure:
+            return
+
+        # Get all Draft/Active claims from graph
+        try:
+            all_data = self.amure.client.get("/api/graph/all").json()
+        except Exception:
+            return
+
+        claims = [
+            n
+            for n in all_data.get("nodes", [])
+            if n.get("kind") == "Claim"
+            and n.get("status") in ("Draft", "Active")
+            and n.get("metadata", {}).get("source") == "distillation"
+        ]
+
+        # Build keyword set from top individuals
+        top_kws: set[str] = set()
+        for ind in top_individuals:
+            top_kws.update(k.lower() for k in self._extract_keywords(ind.thought))
+            top_kws.update(k.lower() for k in self._extract_keywords(ind.code))
+
+        for claim in claims:
+            claim_id = claim["id"]
+            claim_gen = claim.get("metadata", {}).get("generation", 0)
+
+            # A claim is "validated" if top individuals in LATER generations
+            # still exhibit the pattern described by the claim
+            if generation > claim_gen + 2:  # at least 2 generations later
+                claim_kws = set(k.lower() for k in claim.get("keywords", []))
+                overlap = claim_kws & top_kws
+
+                if len(overlap) >= 2:  # meaningful overlap
+                    meta = claim.get("metadata", {})
+                    validations = meta.get("validations", 0) + 1
+                    meta["validations"] = validations
+                    meta["last_validated_gen"] = generation
+
+                    new_status = claim["status"]
+                    if validations >= 3:
+                        new_status = "Accepted"
+                    elif validations >= 1:
+                        new_status = "Active"
+
+                    if new_status != claim["status"]:
+                        try:
+                            self.amure.update_node(
+                                claim_id, status=new_status, metadata=meta
+                            )
+                        except Exception:
+                            pass
+
     def store_evolution_lineage(self, parent_id: str, child_id: str, generation: int) -> None:
         """Store parent→child evolution edge in amure-do."""
         self.amure.add_edge(
