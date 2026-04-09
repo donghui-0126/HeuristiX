@@ -27,21 +27,25 @@ class EvaluationRunner:
             instances: list of instance names (e.g. ["ft06", "ft10"]).
 
         Returns:
-            Aggregated metric dict or {"makespan": inf} on failure.
+            Aggregated metric dict with per-instance breakdown, or {"makespan": inf} on failure.
         """
         from heuristix.evaluation.metrics import aggregate_metrics
 
         all_scores: list[dict[str, float]] = []
+        per_instance: dict[str, dict[str, float]] = {}
 
         for instance_name in instances:
             scores = self._run_single(code, instance_name)
             if scores is not None:
                 all_scores.append(scores)
+                per_instance[instance_name] = scores
 
         if not all_scores:
             return {"makespan": float("inf")}
 
-        return aggregate_metrics(all_scores)
+        aggregated = aggregate_metrics(all_scores)
+        aggregated["per_instance"] = per_instance  # type: ignore[assignment]
+        return aggregated
 
     def _run_single(self, code: str, instance_name: str) -> dict[str, float] | None:
         """Run the heuristic on a single instance in a subprocess."""

@@ -49,4 +49,12 @@ class EvaluationCascade:
             return quick_scores
 
         full_scores = self.runner.evaluate(code, full_instances)
+
+        # Merge per-instance data from quick stage into full results
+        quick_per = quick_scores.get("per_instance", {})
+        full_per = full_scores.get("per_instance", {})
+        if quick_per:
+            merged_per = {**quick_per, **full_per}
+            full_scores["per_instance"] = merged_per
+
         return full_scores

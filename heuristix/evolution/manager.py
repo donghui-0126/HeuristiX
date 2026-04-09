@@ -6,6 +6,14 @@ import time
 from typing import TYPE_CHECKING
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 
 from heuristix.evolution.operators import crossover, init_population, mutate
@@ -73,73 +81,130 @@ class EvolutionManager:
         self._update_best()
         self._log_generation(0)
 
-        for gen in range(1, gens + 1):
-            self.console.print(f"\n[bold cyan]--- Generation {gen}/{gens} ---[/]")
-            start = time.time()
-
-            offspring: list[Individual] = []
-            target_offspring = evo.population_size - evo.elitism
-
-            for _ in range(target_offspring):
-                # Get knowledge context if amure-do is available
-                knowledge_ctx = ""
-                failure_warnings = ""
-                if self.selector:
-                    parent_for_ctx = self.population.tournament_select(evo.tournament_size)
-                    ctx = self.selector.get_context(parent_for_ctx)
-                    knowledge_ctx = ctx.get("knowledge", "")
-                    failure_warnings = ctx.get("failures", "")
-
-                if random.random() < evo.crossover_rate:
-                    # Crossover
-                    parent_a = self.population.tournament_select(evo.tournament_size)
-                    parent_b = self.population.tournament_select(evo.tournament_size)
-                    child = crossover(parent_a, parent_b, self.llm_crossover, knowledge_ctx)
-                else:
-                    # Mutation
-                    parent = self.population.tournament_select(evo.tournament_size)
-                    child = mutate(parent, self.llm_mutation, knowledge_ctx, failure_warnings)
-
-                offspring.append(child)
-
-            # Evaluate offspring
-            for ind in offspring:
-                self._evaluate_individual(ind)
-
-            # Update population
-            self.population.next_generation(offspring)
-            prev_best = self.best_ever.primary_score if self.best_ever else float("inf")
-            self._update_best()
-
-            # Stagnation detection
-            curr_best = self.best_ever.primary_score if self.best_ever else float("inf")
-            if curr_best >= prev_best:
-                self.stagnation_count += 1
-            else:
-                self.stagnation_count = 0
-
-            # Suggest combinations if stuck
-            if self.stagnation_count >= 5 and self.amure:
-                self.console.print("[yellow]Stagnation detected — querying amure-do for suggestions...[/]")
+        # Issue 1: Store initial population in amure-db
+        if self.distiller:
+            for ind in self.population.individuals:
                 try:
-                    suggestions = self.amure.suggest_combinations()
-                    self.console.print(f"[yellow]Suggestions: {suggestions}[/]")
+                    node_id = self.distiller.store_heuristic(ind, generation=0)
+                    ind.node_id = node_id
                 except Exception:
                     pass
-                self.stagnation_count = 0
 
-            # Knowledge distillation
-            kn = self.config.knowledge
-            if self.distiller and gen % kn.distill_every == 0:
-                top_k = self.population.get_top(kn.top_k_compare)
-                bottom_k = self.population.get_bottom(kn.bottom_k_compare)
-                try:
-                    self.distiller.distill_generation(top_k, bottom_k, gen)
-                except Exception as e:
-                    self.console.print(f"[red]Distillation error: {e}[/]")
+        # Issue 2: Progress bar wrapping the generation loop
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=self.console,
+        ) as progress:
+            gen_task = progress.add_task("Evolution", total=gens)
 
-            elapsed = time.time() - start
-            self._log_generation(gen, elapsed)
+            for gen in range(1, gens + 1):
+                progress.update(gen_task, description=f"Gen {gen}/{gens}")
+                start = time.time()
+
+                offspring: list[Individual] = []
+                target_offspring = evo.population_size - evo.elitism
+
+                # Sub-progress for offspring generation
+                offspring_task = progress.add_task(
+                    "  Offspring", total=target_offspring, visible=True
+                )
+
+                for _ in range(target_offspring):
+                    # Get knowledge context if amure-do is available
+                    knowledge_ctx = ""
+                    failure_warnings = ""
+                    if self.selector:
+                        parent_for_ctx = self.population.tournament_select(evo.tournament_size)
+                        ctx = self.selector.get_context(parent_for_ctx)
+                        knowledge_ctx = ctx.get("knowledge", "")
+                        failure_warnings = ctx.get("failures", "")
+
+                    if random.random() < evo.crossover_rate:
+                        # Crossover
+                        parent_a = self.population.tournament_select(evo.tournament_size)
+                        parent_b = self.population.tournament_select(evo.tournament_size)
+                        child = crossover(parent_a, parent_b, self.llm_crossover, knowledge_ctx)
+                    else:
+                        # Mutation
+                        parent = self.population.tournament_select(evo.tournament_size)
+                        child = mutate(parent, self.llm_mutation, knowledge_ctx, failure_warnings)
+
+                    offspring.append(child)
+                    progress.advance(offspring_task)
+
+                progress.remove_task(offspring_task)
+
+                # Evaluate offspring
+                for ind in offspring:
+                    self._evaluate_individual(ind)
+
+                # Issue 1: Store offspring in amure-db and record lineage
+                if self.distiller:
+                    for ind in offspring:
+                        try:
+                            node_id = self.distiller.store_heuristic(ind, generation=gen)
+                            ind.node_id = node_id
+                            # Store lineage from parents
+                            for pid in ind.parent_ids:
+                                parent = next(
+                                    (p for p in self.population.individuals if p.id == pid),
+                                    None,
+                                )
+                                if parent and parent.node_id:
+                                    self.distiller.store_evolution_lineage(
+                                        parent.node_id, node_id, gen
+                                    )
+                        except Exception:
+                            pass
+
+                # Update population
+                self.population.next_generation(offspring)
+                prev_best = self.best_ever.primary_score if self.best_ever else float("inf")
+                self._update_best()
+
+                # Stagnation detection
+                curr_best = self.best_ever.primary_score if self.best_ever else float("inf")
+                if curr_best >= prev_best:
+                    self.stagnation_count += 1
+                else:
+                    self.stagnation_count = 0
+
+                # Suggest combinations if stuck
+                if self.stagnation_count >= 5 and self.amure:
+                    self.console.print("[yellow]Stagnation detected — querying amure-do for suggestions...[/]")
+                    try:
+                        suggestions = self.amure.suggest_combinations()
+                        self.console.print(f"[yellow]Suggestions: {suggestions}[/]")
+                    except Exception:
+                        pass
+                    self.stagnation_count = 0
+
+                # Knowledge distillation
+                kn = self.config.knowledge
+                if self.distiller and gen % kn.distill_every == 0:
+                    top_k = self.population.get_top(kn.top_k_compare)
+                    bottom_k = self.population.get_bottom(kn.bottom_k_compare)
+                    try:
+                        self.distiller.distill_generation(top_k, bottom_k, gen)
+                    except Exception as e:
+                        self.console.print(f"[red]Distillation error: {e}[/]")
+
+                elapsed = time.time() - start
+                self._log_generation(gen, elapsed)
+
+                progress.advance(gen_task)
+
+        # Issue 1: Mark best-ever as Accepted in amure-db
+        if self.distiller and self.best_ever and self.best_ever.node_id:
+            try:
+                self.amure.update_node(self.best_ever.node_id, status="Accepted")
+            except Exception:
+                pass
 
         # Save graph at the end
         if self.amure:
@@ -152,6 +217,9 @@ class EvolutionManager:
         if self.best_ever:
             self.console.print(f"[bold green]Best: {self.best_ever.summary()}[/]")
             self.console.print(f"[dim]Thought: {self.best_ever.thought}[/]")
+
+        # Print benchmark comparison if per-instance data available
+        self._print_benchmark_comparison()
 
         return self.best_ever
 
@@ -210,4 +278,45 @@ class EvolutionManager:
         if self.best_ever:
             table.add_row("Best ever", f"{self.best_ever.primary_score:.1f}")
 
+        # Show per-instance gap-to-optimal for the best individual
+        best = self.population.best
+        if best:
+            per_instance = best.scores.get("per_instance")
+            if isinstance(per_instance, dict) and per_instance:
+                from heuristix.problems.jssp.benchmarks_known import gap_to_optimal
+
+                gaps = []
+                for inst, inst_scores in sorted(per_instance.items()):
+                    ms = inst_scores.get("makespan", float("inf"))
+                    gap = gap_to_optimal(inst, ms)
+                    if gap is not None:
+                        gaps.append(f"{inst}: {gap:+.1f}%")
+                if gaps:
+                    table.add_row("Gap to optimal", ", ".join(gaps))
+
         self.console.print(table)
+
+    def _print_benchmark_comparison(self) -> None:
+        """Print a final benchmark comparison table for the best individual."""
+        if not self.best_ever:
+            return
+
+        per_instance = self.best_ever.scores.get("per_instance")
+        if not isinstance(per_instance, dict) or not per_instance:
+            return
+
+        from heuristix.problems.jssp.benchmarks_known import format_benchmark_comparison
+
+        # Extract per-instance makespans
+        instance_makespans: dict[str, float] = {}
+        for inst, inst_scores in per_instance.items():
+            ms = inst_scores.get("makespan", float("inf"))
+            if ms < float("inf"):
+                instance_makespans[inst] = ms
+
+        if not instance_makespans:
+            return
+
+        self.console.print("\n[bold cyan]--- Benchmark Comparison ---[/]")
+        comparison = format_benchmark_comparison(instance_makespans)
+        self.console.print(f"[white]{comparison}[/]")

@@ -181,7 +181,7 @@ class KnowledgeDistiller:
         """Format a list of individuals for prompt inclusion."""
         parts: list[str] = []
         for ind in individuals:
-            scores = ", ".join(f"{k}={v:.1f}" for k, v in sorted(ind.scores.items()))
+            scores = ", ".join(f"{k}={v:.1f}" for k, v in sorted(ind.scores.items()) if isinstance(v, (int, float)))
             parts.append(
                 f"### {ind.id} (scores: {scores})\n"
                 f"Thought: {ind.thought}\n"

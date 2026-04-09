@@ -41,7 +41,10 @@ def _format_scores(scores: dict[str, float]) -> str:
     """Format score dict as readable string."""
     if not scores:
         return "Not yet evaluated"
-    return ", ".join(f"{k}: {v:.2f}" for k, v in sorted(scores.items()))
+    return ", ".join(
+        f"{k}: {v:.2f}" for k, v in sorted(scores.items())
+        if isinstance(v, (int, float))
+    )
 
 
 def mutate(

@@ -50,7 +50,7 @@ class Individual:
 
     def summary(self) -> str:
         """One-line summary for logging."""
-        score_str = ", ".join(f"{k}={v:.1f}" for k, v in sorted(self.scores.items()))
+        score_str = ", ".join(f"{k}={v:.1f}" for k, v in sorted(self.scores.items()) if isinstance(v, (int, float)))
         return f"[{self.id}] gen={self.generation} {score_str}"
 
 
