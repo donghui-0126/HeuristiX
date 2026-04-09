@@ -35,10 +35,16 @@ class KnowledgeSelector:
         """
         query = f"{individual.thought}\n{individual.code[:200]}"
 
-        # 1. Search for relevant mature knowledge (top 2)
+        # 1. Search for relevant knowledge (prefer mature, fallback to all)
         knowledge_items: list[dict] = []
         try:
             knowledge_items = self.embeddings.search_mature(query, top_k=2)
+            if not knowledge_items:
+                # No mature items yet — search all, but prefer Active over Draft
+                all_items = self.embeddings.search(query, top_k=4)
+                all_items.sort(key=lambda x: {"Accepted": 0, "Active": 1, "Draft": 2}.get(
+                    x.get("metadata", {}).get("status", "Draft"), 3))
+                knowledge_items = all_items[:2]
         except Exception:
             pass
 
