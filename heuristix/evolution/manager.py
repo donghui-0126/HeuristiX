@@ -42,6 +42,7 @@ class EvolutionManager:
         amure_client: AmureClient | None = None,
         knowledge_selector: KnowledgeSelector | None = None,
         knowledge_distiller: KnowledgeDistiller | None = None,
+        rag_mode: str = "full",
     ):
         self.config = config
         self.problem = problem
@@ -60,6 +61,7 @@ class EvolutionManager:
         self.amure = amure_client
         self.selector = knowledge_selector
         self.distiller = knowledge_distiller
+        self.rag_mode = rag_mode
         self.console = Console()
 
         evo = config.evolution
@@ -75,7 +77,7 @@ class EvolutionManager:
         gens = generations or self.config.evolution.generations
         evo = self.config.evolution
 
-        self.console.print("\n[bold cyan]--- Initializing population ---[/]")
+        self.console.print(f"\n[bold cyan]--- Initializing population (RAG mode: {self.rag_mode}) ---[/]")
         self._init_population()
         self._evaluate_population()
         self._update_best()
@@ -115,14 +117,30 @@ class EvolutionManager:
                 )
 
                 for _ in range(target_offspring):
-                    # Get knowledge context if amure-do is available
+                    # Get knowledge context based on rag_mode
                     knowledge_ctx = ""
                     failure_warnings = ""
                     if self.selector:
                         parent_for_ctx = self.population.tournament_select(evo.tournament_size)
-                        ctx = self.selector.get_context(parent_for_ctx)
-                        knowledge_ctx = ctx.get("knowledge", "")
-                        failure_warnings = ctx.get("failures", "")
+                        if self.rag_mode == "none":
+                            pass  # no injection
+                        elif self.rag_mode == "failure-only":
+                            # Only get failure warnings, no insights
+                            ctx = self.selector.get_context(
+                                parent_for_ctx, include_insights=False,
+                            )
+                            failure_warnings = ctx.get("failures", "")
+                        elif self.rag_mode == "adaptive":
+                            # Only inject after generation 5
+                            if gen >= 5:
+                                ctx = self.selector.get_context(parent_for_ctx)
+                                knowledge_ctx = ctx.get("knowledge", "")
+                                failure_warnings = ctx.get("failures", "")
+                            # Early gens: no injection (free exploration)
+                        else:  # "full"
+                            ctx = self.selector.get_context(parent_for_ctx)
+                            knowledge_ctx = ctx.get("knowledge", "")
+                            failure_warnings = ctx.get("failures", "")
 
                     if random.random() < evo.crossover_rate:
                         # Crossover

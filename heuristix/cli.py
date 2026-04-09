@@ -23,6 +23,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Run without amure-do connection (no knowledge storage)",
     )
+    parser.add_argument(
+        "--rag-mode",
+        choices=["full", "failure-only", "adaptive", "none"],
+        default="full",
+        help="RAG injection mode: full (insights+failures), failure-only, adaptive (late-stage only), none",
+    )
     args = parser.parse_args(argv)
 
     console = Console()
@@ -113,6 +119,7 @@ def main(argv: list[str] | None = None) -> None:
         amure_client=amure_client,
         knowledge_selector=knowledge_selector,
         knowledge_distiller=knowledge_distiller,
+        rag_mode=args.rag_mode if not args.no_amure else "none",
     )
 
     best = manager.run()

@@ -26,7 +26,7 @@ class KnowledgeSelector:
         self.embeddings = embedding_store or EmbeddingStore()
 
     def get_context(
-        self, individual: Individual, include_failures: bool = True
+        self, individual: Individual, include_failures: bool = True, include_insights: bool = True,
     ) -> dict[str, str]:
         """Build a knowledge context dict using embedding similarity.
 
@@ -37,16 +37,17 @@ class KnowledgeSelector:
 
         # 1. Search for relevant knowledge (prefer mature, fallback to all)
         knowledge_items: list[dict] = []
-        try:
-            knowledge_items = self.embeddings.search_mature(query, top_k=2)
-            if not knowledge_items:
-                # No mature items yet — search non-failure entries, prefer Active over Draft
-                all_items = self.embeddings.search_insights(query, top_k=4)
-                all_items.sort(key=lambda x: {"Accepted": 0, "Active": 1, "Draft": 2}.get(
-                    x.get("metadata", {}).get("status", "Draft"), 3))
-                knowledge_items = all_items[:2]
-        except Exception:
-            pass
+        if include_insights:
+            try:
+                knowledge_items = self.embeddings.search_mature(query, top_k=2)
+                if not knowledge_items:
+                    # No mature items yet — search non-failure entries, prefer Active over Draft
+                    all_items = self.embeddings.search_insights(query, top_k=4)
+                    all_items.sort(key=lambda x: {"Accepted": 0, "Active": 1, "Draft": 2}.get(
+                        x.get("metadata", {}).get("status", "Draft"), 3))
+                    knowledge_items = all_items[:2]
+            except Exception:
+                pass
 
         # 2. Search for failure warnings (top 2)
         failure_items: list[dict] = []
@@ -61,7 +62,7 @@ class KnowledgeSelector:
         failure_items = self._enrich_with_graph(failure_items)
 
         # 3. Fallback to amure-db token search if no embedding results
-        if not knowledge_items and self.amure:
+        if include_insights and not knowledge_items and self.amure:
             try:
                 keywords = self._extract_keywords(individual)
                 kw_query = " ".join(keywords) if keywords else "job shop scheduling heuristic"
@@ -123,8 +124,13 @@ class KnowledgeSelector:
 
         # Log
         sim_strs = [f"{x.get('similarity', 0):.2f}" for x in knowledge_items]
+        mode_tag = ""
+        if not include_insights:
+            mode_tag = " [failure-only]"
+        elif not include_failures:
+            mode_tag = " [insights-only]"
         _console.print(
-            f"  [dim][RAG] {len(knowledge_items)} insights "
+            f"  [dim][RAG{mode_tag}] {len(knowledge_items)} insights "
             f"(sim: {', '.join(sim_strs)}), "
             f"{len(failure_items)} failures[/]"
         )
