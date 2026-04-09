@@ -31,104 +31,110 @@ class JSSPProblem(Problem):
         This code is embedded into the subprocess runner script.
         It includes the simulator logic and all instance data needed.
         """
-        return textwrap.dedent('''\
-            # ── JSSP Simulator (embedded) ──
+        # Build instance data dict entries
+        instance_entries = []
+        instance_entries.append(f'    "ft06": """{FT06.strip()}"""')
+        instance_entries.append(f'    "ft10": """{FT10.strip()}"""')
+        instances_str = ",\n".join(instance_entries)
 
-            def parse_instance(text):
-                lines = [l.strip() for l in text.strip().split("\\n") if l.strip()]
-                header = lines[0].split()
-                n_jobs, n_machines = int(header[0]), int(header[1])
-                jobs = []
-                for ji in range(n_jobs):
-                    tokens = lines[1 + ji].split()
-                    ops = []
-                    for oi in range(n_machines):
-                        machine = int(tokens[2 * oi])
-                        duration = int(tokens[2 * oi + 1])
-                        ops.append({"job": ji, "op_idx": oi, "machine": machine, "duration": duration})
-                    jobs.append(ops)
-                return {"n_jobs": n_jobs, "n_machines": n_machines, "jobs": jobs}
+        skeleton = f'''\
+# -- JSSP Simulator (embedded) --
 
-            def build_schedule(instance, heuristic_fn):
-                n_jobs = instance["n_jobs"]
-                n_machines = instance["n_machines"]
-                jobs = instance["jobs"]
-                next_op = [0] * n_jobs
-                job_end = [0.0] * n_jobs
-                machine_end = [0.0] * n_machines
-                machine_loads = [0.0] * n_machines
-                schedule = []
-                total_ops = sum(len(j) for j in jobs)
+def parse_instance(text):
+    lines = [l.strip() for l in text.strip().split("\\n") if l.strip()]
+    header = lines[0].split()
+    n_jobs, n_machines = int(header[0]), int(header[1])
+    jobs = []
+    for ji in range(n_jobs):
+        tokens = lines[1 + ji].split()
+        ops = []
+        for oi in range(n_machines):
+            machine = int(tokens[2 * oi])
+            duration = int(tokens[2 * oi + 1])
+            ops.append({{"job": ji, "op_idx": oi, "machine": machine, "duration": duration}})
+        jobs.append(ops)
+    return {{"n_jobs": n_jobs, "n_machines": n_machines, "jobs": jobs}}
 
-                while len(schedule) < total_ops:
-                    available = []
-                    indices = []
-                    for ji in range(n_jobs):
-                        oi = next_op[ji]
-                        if oi >= len(jobs[ji]):
-                            continue
-                        op = jobs[ji][oi]
-                        rem_ops = len(jobs[ji]) - oi
-                        rem_time = sum(o["duration"] for o in jobs[ji][oi:])
-                        available.append({
-                            "job": ji, "op_idx": oi, "machine": op["machine"],
-                            "duration": op["duration"], "remaining_ops": rem_ops,
-                            "remaining_time": rem_time,
-                        })
-                        indices.append((ji, oi))
-                    if not available:
-                        break
-                    current_time = min(
-                        max(job_end[ji], machine_end[jobs[ji][oi]["machine"]])
-                        for ji, oi in indices
-                    )
-                    try:
-                        sel = heuristic_fn(available, list(machine_loads), current_time)
-                        sel = int(sel)
-                        if sel < 0 or sel >= len(available):
-                            sel = 0
-                    except Exception:
-                        sel = 0
-                    ji, oi = indices[sel]
-                    op = jobs[ji][oi]
-                    start = max(job_end[ji], machine_end[op["machine"]])
-                    end = start + op["duration"]
-                    schedule.append({"job": ji, "op_idx": oi, "machine": op["machine"], "start": start, "end": end})
-                    next_op[ji] = oi + 1
-                    job_end[ji] = end
-                    machine_end[op["machine"]] = end
-                    machine_loads[op["machine"]] += op["duration"]
-                return schedule
+def build_schedule(instance, heuristic_fn):
+    n_jobs = instance["n_jobs"]
+    n_machines = instance["n_machines"]
+    jobs = instance["jobs"]
+    next_op = [0] * n_jobs
+    job_end = [0.0] * n_jobs
+    machine_end = [0.0] * n_machines
+    machine_loads = [0.0] * n_machines
+    schedule = []
+    total_ops = sum(len(j) for j in jobs)
 
-            def compute_schedule_metrics(schedule, n_jobs, n_machines):
-                if not schedule:
-                    return {"makespan": 1e18, "flowtime": 1e18, "utilization": 0.0, "tardiness": 0.0}
-                makespan = max(op["end"] for op in schedule)
-                job_comp = {}
-                for op in schedule:
-                    j = op["job"]
-                    if j not in job_comp or op["end"] > job_comp[j]:
-                        job_comp[j] = op["end"]
-                flowtime = sum(job_comp.values())
-                total_proc = sum(op["end"] - op["start"] for op in schedule)
-                util = total_proc / (makespan * n_machines) if makespan > 0 else 0.0
-                return {"makespan": makespan, "flowtime": flowtime, "utilization": util, "tardiness": 0.0}
+    while len(schedule) < total_ops:
+        available = []
+        indices = []
+        for ji in range(n_jobs):
+            oi = next_op[ji]
+            if oi >= len(jobs[ji]):
+                continue
+            op = jobs[ji][oi]
+            rem_ops = len(jobs[ji]) - oi
+            rem_time = sum(o["duration"] for o in jobs[ji][oi:])
+            available.append({{
+                "job": ji, "op_idx": oi, "machine": op["machine"],
+                "duration": op["duration"], "remaining_ops": rem_ops,
+                "remaining_time": rem_time,
+            }})
+            indices.append((ji, oi))
+        if not available:
+            break
+        current_time = min(
+            max(job_end[ji], machine_end[jobs[ji][oi]["machine"]])
+            for ji, oi in indices
+        )
+        try:
+            sel = heuristic_fn(available, list(machine_loads), current_time)
+            sel = int(sel)
+            if sel < 0 or sel >= len(available):
+                sel = 0
+        except Exception:
+            sel = 0
+        ji, oi = indices[sel]
+        op = jobs[ji][oi]
+        start = max(job_end[ji], machine_end[op["machine"]])
+        end = start + op["duration"]
+        schedule.append({{"job": ji, "op_idx": oi, "machine": op["machine"], "start": start, "end": end}})
+        next_op[ji] = oi + 1
+        job_end[ji] = end
+        machine_end[op["machine"]] = end
+        machine_loads[op["machine"]] += op["duration"]
+    return schedule
 
-            # ── Instance data ──
+def compute_schedule_metrics(schedule, n_jobs, n_machines):
+    if not schedule:
+        return {{"makespan": 1e18, "flowtime": 1e18, "utilization": 0.0, "tardiness": 0.0}}
+    makespan = max(op["end"] for op in schedule)
+    job_comp = {{}}
+    for op in schedule:
+        j = op["job"]
+        if j not in job_comp or op["end"] > job_comp[j]:
+            job_comp[j] = op["end"]
+    flowtime = sum(job_comp.values())
+    total_proc = sum(op["end"] - op["start"] for op in schedule)
+    util = total_proc / (makespan * n_machines) if makespan > 0 else 0.0
+    return {{"makespan": makespan, "flowtime": flowtime, "utilization": util, "tardiness": 0.0}}
 
-            INSTANCES = {
-                "ft06": """''' + FT06.strip() + '''""",
-                "ft10": """''' + FT10.strip() + '''""",
-            }
+# -- Instance data --
 
-            def run_evaluation(heuristic_fn, instance_name):
-                text = INSTANCES.get(instance_name)
-                if text is None:
-                    return {"makespan": 1e18, "error": f"Unknown instance: {instance_name}"}
-                inst = parse_instance(text)
-                schedule = build_schedule(inst, heuristic_fn)
-                return compute_schedule_metrics(schedule, inst["n_jobs"], inst["n_machines"])
-        ''')
+INSTANCES = {{
+{instances_str}
+}}
+
+def run_evaluation(heuristic_fn, instance_name):
+    text = INSTANCES.get(instance_name)
+    if text is None:
+        return {{"makespan": 1e18, "error": f"Unknown instance: {{instance_name}}"}}
+    inst = parse_instance(text)
+    schedule = build_schedule(inst, heuristic_fn)
+    return compute_schedule_metrics(schedule, inst["n_jobs"], inst["n_machines"])
+'''
+        return skeleton
 
     def get_heuristic_template(self) -> str:
         """Return the function signature the LLM should implement."""

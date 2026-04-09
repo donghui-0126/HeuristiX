@@ -5,32 +5,27 @@ amure_do:
 
 llm:
   default:
-    provider: "openai"
-    model: "gpt-4o-mini"
-    api_key: ""  # Set via OPENAI_API_KEY env var or here
+    provider: "claude_cli"
+    model: ""
+    api_key: ""
     temperature: 0.7
 
   roles:
     mutation:
-      provider: "openai"
-      model: "gpt-4o-mini"
-      temperature: 0.8  # higher creativity for mutations
+      provider: "claude_cli"
+      temperature: 0.8
     crossover:
-      provider: "openai"
-      model: "gpt-4o"
+      provider: "claude_cli"
       temperature: 0.6
     reflection:
-      provider: "openai"
-      model: "gpt-4o"
-      temperature: 0.3  # lower for analytical tasks
+      provider: "claude_cli"
+      temperature: 0.3
     distillation:
-      provider: "openai"
-      model: "gpt-4o"
+      provider: "claude_cli"
       temperature: 0.3
     init:
-      provider: "openai"
-      model: "gpt-4o"
-      temperature: 0.9  # highest creativity for initial population
+      provider: "claude_cli"
+      temperature: 0.9
 
 evolution:
   population_size: 10
@@ -43,7 +38,7 @@ evolution:
 evaluation:
   cascade: true
   quick_instances: ["ft06"]
-  full_instances: ["ft06", "ft10", "ft20"]
+  full_instances: ["ft06", "ft10"]
   timeout_per_instance: 30
 
   metrics:
@@ -62,10 +57,10 @@ knowledge:
 
   # amure-db edge mapping for HeuristiX
   edge_mapping:
-    evolution_lineage: "DerivedFrom"    # parent heuristic → child heuristic
-    insight_supports: "Support"          # insight → claim (supports)
-    insight_rebuts: "Rebut"             # failure insight → claim (rebuts)
-    strategy_refines: "Refines"          # improved strategy → base strategy
+    evolution_lineage: "DerivedFrom"    # parent heuristic -> child heuristic
+    insight_supports: "Support"          # insight -> claim (supports)
+    insight_rebuts: "Rebut"             # failure insight -> claim (rebuts)
+    strategy_refines: "Refines"          # improved strategy -> base strategy
     strategy_depends: "DependsOn"        # strategy depends on condition
     strategy_contradicts: "Contradicts"  # contradictory strategies
 

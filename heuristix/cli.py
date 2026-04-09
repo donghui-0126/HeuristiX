@@ -49,13 +49,14 @@ def main(argv: list[str] | None = None) -> None:
         console.print(f"[red]Unknown problem type: {args.problem}[/]")
         sys.exit(1)
 
-    # Initialize LLM provider
+    # Initialize LLM provider (default role)
     from heuristix.llm.provider import create_provider
 
     llm = create_provider(
-        provider=config.llm.provider,
-        model=config.llm.model,
-        api_key=config.llm.api_key,
+        provider=config.llm.default.provider,
+        model=config.llm.default.model,
+        api_key=config.llm.default.api_key,
+        temperature=config.llm.default.temperature,
     )
 
     # Initialize evaluator

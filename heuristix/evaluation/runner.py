@@ -83,22 +83,24 @@ class EvaluationRunner:
         # Get the problem's evaluation skeleton
         skeleton = self.problem.get_skeleton()
 
-        return textwrap.dedent(f"""\
-            import json
-            import sys
-
-            # --- Heuristic code ---
-            {textwrap.indent(heuristic_code, "            ").strip()}
-
-            # --- Problem skeleton (simulator + instance data) ---
-            {textwrap.indent(skeleton, "            ").strip()}
-
-            # --- Run evaluation ---
-            if __name__ == "__main__":
-                try:
-                    metrics = run_evaluation(heuristic, "{instance_name}")
-                    print(json.dumps(metrics))
-                except Exception as e:
-                    print(json.dumps({{"makespan": 1e18, "error": str(e)}}))
-                    sys.exit(1)
-        """)
+        # Build script with all code at top level (no indentation wrapping)
+        parts = [
+            "import json",
+            "import sys",
+            "",
+            "# --- Heuristic code ---",
+            heuristic_code.strip(),
+            "",
+            "# --- Problem skeleton (simulator + instance data) ---",
+            skeleton.strip(),
+            "",
+            "# --- Run evaluation ---",
+            "if __name__ == '__main__':",
+            "    try:",
+            f'        metrics = run_evaluation(heuristic, "{instance_name}")',
+            "        print(json.dumps(metrics))",
+            "    except Exception as e:",
+            '        print(json.dumps({"makespan": 1e18, "error": str(e)}))',
+            "        sys.exit(1)",
+        ]
+        return "\n".join(parts) + "\n"
