@@ -130,12 +130,22 @@ class EmbeddingStore:
         )
 
     def search_mature(self, query: str, top_k: int = 3) -> list[dict]:
-        """Search only Accepted/Active entries (mature knowledge)."""
+        """Search only Accepted/Active non-failure entries (mature knowledge)."""
         return self.search(
             query,
             top_k,
-            filter_fn=lambda e: e.get("metadata", {}).get("status")
-            in ("Accepted", "Active"),
+            filter_fn=lambda e: (
+                not e.get("metadata", {}).get("is_failure", False)
+                and e.get("metadata", {}).get("status") in ("Accepted", "Active")
+            ),
+        )
+
+    def search_insights(self, query: str, top_k: int = 3) -> list[dict]:
+        """Search non-failure entries regardless of status (fallback for mature)."""
+        return self.search(
+            query,
+            top_k,
+            filter_fn=lambda e: not e.get("metadata", {}).get("is_failure", False),
         )
 
     @property

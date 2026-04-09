@@ -112,7 +112,8 @@ class KnowledgeDistiller:
 
             # Store embedding for semantic search
             if self.embedding_store and node_id:
-                one_liner = claim_text.split(".")[0] + "."
+                first_sentence = claim_text.split(".")[0] + "."
+                one_liner = first_sentence[:57] + "..." if len(first_sentence) > 60 else first_sentence
                 try:
                     self.embedding_store.add(
                         node_id=node_id,
@@ -159,11 +160,13 @@ class KnowledgeDistiller:
             # Store failure embedding for semantic search
             failure_id = failure_node.get("id", "")
             if self.embedding_store and failure_id:
+                first_sentence = failure_text.split(".")[0] + "."
+                fail_one_liner = first_sentence[:57] + "..." if len(first_sentence) > 60 else first_sentence
                 try:
                     self.embedding_store.add(
                         node_id=failure_id,
                         text=failure_text,
-                        one_liner=failure_text.split(".")[0] + ".",
+                        one_liner=fail_one_liner,
                         metadata={
                             "generation": generation,
                             "source": "distillation",
@@ -237,6 +240,14 @@ class KnowledgeDistiller:
                         except Exception:
                             pass
 
+                        # Sync status to embedding store
+                        if self.embedding_store:
+                            for entry in self.embedding_store.entries:
+                                if entry["id"] == claim_id:
+                                    entry["metadata"]["status"] = new_status
+                                    break
+                            self.embedding_store._save()
+
     def store_evolution_lineage(self, parent_id: str, child_id: str, generation: int) -> None:
         """Store parent→child evolution edge in amure-do."""
         self.amure.add_edge(
@@ -271,6 +282,14 @@ class KnowledgeDistiller:
         else:
             status = "Draft"
         self.amure.update_node(node_id, status=status)
+
+        # Sync status to embedding store
+        if self.embedding_store:
+            for entry in self.embedding_store.entries:
+                if entry["id"] == node_id:
+                    entry["metadata"]["status"] = status
+                    break
+            self.embedding_store._save()
 
     def _format_individuals(self, individuals: list[Individual]) -> str:
         """Format a list of individuals for prompt inclusion."""

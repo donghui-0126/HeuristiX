@@ -40,8 +40,8 @@ class KnowledgeSelector:
         try:
             knowledge_items = self.embeddings.search_mature(query, top_k=2)
             if not knowledge_items:
-                # No mature items yet — search all, but prefer Active over Draft
-                all_items = self.embeddings.search(query, top_k=4)
+                # No mature items yet — search non-failure entries, prefer Active over Draft
+                all_items = self.embeddings.search_insights(query, top_k=4)
                 all_items.sort(key=lambda x: {"Accepted": 0, "Active": 1, "Draft": 2}.get(
                     x.get("metadata", {}).get("status", "Draft"), 3))
                 knowledge_items = all_items[:2]
@@ -55,6 +55,10 @@ class KnowledgeSelector:
                 failure_items = self.embeddings.search_failures(query, top_k=2)
             except Exception:
                 pass
+
+        # 2b. Enrich with graph context (best-effort)
+        knowledge_items = self._enrich_with_graph(knowledge_items)
+        failure_items = self._enrich_with_graph(failure_items)
 
         # 3. Fallback to amure-db token search if no embedding results
         if not knowledge_items and self.amure:
@@ -84,19 +88,25 @@ class KnowledgeSelector:
         if knowledge_items:
             knowledge_str = "## Proven insights (from previous experiments):\n"
             for item in knowledge_items:
+                graph_ctx = item.get("graph_context", "")
                 knowledge_str += (
                     f"- [{item.get('one_liner', '')}] (sim={item.get('similarity', 0):.2f})\n"
                     f"  {item['text'][:150]}\n"
                 )
+                if graph_ctx:
+                    knowledge_str += f"  Context: {graph_ctx}\n"
 
         failure_str = ""
         if failure_items:
             failure_str = "## AVOID these approaches (previously failed):\n"
             for item in failure_items:
+                graph_ctx = item.get("graph_context", "")
                 failure_str += (
                     f"- {item.get('one_liner', '')}\n"
                     f"  {item['text'][:150]}\n"
                 )
+                if graph_ctx:
+                    failure_str += f"  Context: {graph_ctx}\n"
 
         # 5. Suggestions from amure-db (unchanged)
         suggestion_str = ""
@@ -126,6 +136,44 @@ class KnowledgeSelector:
             "n_knowledge": len(knowledge_items),
             "n_failures": len(failure_items),
         }
+
+    def _enrich_with_graph(self, items: list[dict]) -> list[dict]:
+        """Walk the graph from each item to add connected context."""
+        if not self.amure:
+            return items
+
+        enriched = []
+        for item in items:
+            node_id = item.get("id", "")
+            if not node_id:
+                enriched.append(item)
+                continue
+
+            try:
+                # Walk 1 hop from this node
+                walk_data = self.amure.walk(node_id, hops=1)
+                connected = walk_data.get("nodes", [])
+
+                # Build context from connected nodes
+                context_parts = []
+                for n in connected:
+                    if n.get("depth", 0) == 0:
+                        continue  # skip self
+                    kind = n.get("kind", "")
+                    stmt = n.get("statement", "")[:60]
+                    if kind == "Experiment":
+                        context_parts.append(f"[Experiment] {stmt}")
+                    elif kind == "Reason":
+                        context_parts.append(f"[Reason] {stmt}")
+                    elif kind == "Claim":
+                        context_parts.append(f"[Related] {stmt}")
+
+                item["graph_context"] = "; ".join(context_parts[:3]) if context_parts else ""
+            except Exception:
+                item["graph_context"] = ""
+
+            enriched.append(item)
+        return enriched
 
     def _extract_keywords(self, individual: Individual) -> list[str]:
         """Extract search keywords from an individual's thought and code."""
